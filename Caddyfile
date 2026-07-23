@@ -1,0 +1,7 @@
+spines-woo-sync-n8n.duckdns.org {
+	reverse_proxy n8n:5678
+}
+
+spines-woo-sync-twenty.duckdns.org {
+	reverse_proxy twenty-server:3000
+}

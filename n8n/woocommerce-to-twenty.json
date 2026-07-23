@@ -1,0 +1,621 @@
+{
+  "name": "WC - Completed Order Receiver",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "woo-order",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1104,
+        336
+      ],
+      "id": "8c78dce4-c8d3-43b2-85fe-cf53c684821c",
+      "name": "Webhook",
+      "webhookId": "476e9ebb-ba6d-43d4-9fa3-0029ada14df9"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "binaryData": true,
+        "encoding": "base64"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        -896,
+        336
+      ],
+      "id": "d2e2a0bd-6701-4fec-91f3-4fcf9ff88a0f",
+      "name": "Signature"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "07db39cc-5731-495e-bd2c-47a2eb985ecf",
+              "leftValue": "={{ $json.data }}",
+              "rightValue": "={{ $json.headers[\"x-wc-webhook-signature\"] ?? \"\" }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -688,
+        336
+      ],
+      "id": "9cecb535-98d5-4b6b-a456-11b6b81775ca",
+      "name": "If Signature valid"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "17c04342-31a1-42f5-b58b-d3dfb5783be9",
+              "leftValue": "={{ $json.body.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -480,
+        240
+      ],
+      "id": "c5f0c282-a21f-4984-8cf1-5df162630dce",
+      "name": "Order completed"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"accepted\":false,\"reason\":\"order_not_completed\"}\n",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -256,
+        336
+      ],
+      "id": "e98fc764-6f2e-4716-95ea-8dfe9f6970ab",
+      "name": "Not completed branch"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"accepted\":false,\"reason\":\"invalid_signature\"}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -480,
+        432
+      ],
+      "id": "0fc6a7a3-5e4b-44dd-9d05-0afb8905b96f",
+      "name": "Invalid signature branch"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst order = input.body ?? input;\nconst billing = order.billing;\n\nif (!billing?.email) {\n  throw new Error('Order has no billing email');\n}\n\nreturn [{\n  json: {\n    order,\n    person: {\n      wooCustomerId: order.customer_id\n        ? String(order.customer_id)\n        : null,\n      email: billing.email.trim().toLowerCase(),\n      firstName: billing.first_name || '',\n      lastName: billing.last_name || '',\n    },\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -256,
+        144
+      ],
+      "id": "cf350245-90de-4cb3-bbb5-e0f683663e05",
+      "name": "Prepare Person"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://spines-woo-sync-twenty.duckdns.org/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        176,
+        144
+      ],
+      "id": "255dd82b-8ba3-44bc-ae96-8a3ee4a9a2e7",
+      "name": "Upsert Person"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst p = input.person ?? input;\n\nconst query = `mutation {\n  createPeople(\n    data: [{\n      wooCustomerId: ${JSON.stringify(p.wooCustomerId)}\n      emails: {\n        primaryEmail: ${JSON.stringify(p.email)}\n        additionalEmails: []\n      }\n      name: {\n        firstName: ${JSON.stringify(p.firstName)}\n        lastName: ${JSON.stringify(p.lastName)}\n      }\n    }]\n    upsert: true\n  ) {\n    id\n    wooCustomerId\n    emails {\n      primaryEmail\n    }\n  }\n}`;\n\nreturn [{ json: { ...input, query } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -48,
+        144
+      ],
+      "id": "73415913-c951-44c7-bbf5-17913cd74255",
+      "name": "Build Person Mutation"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst context = $('Prepare Person').first().json;\nconst person = response.data?.createPeople?.[0];\n\nif (!person?.id) {\n  throw new Error('Twenty did not return a Person ID');\n}\n\nreturn [{\n  json: {\n    order: context.order,\n    person: context.person,\n    personId: person.id,\n    twentyPerson: person,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        368,
+        144
+      ],
+      "id": "1c931b5d-bbe2-4122-92cd-080dfcbd676d",
+      "name": "Extract Person ID"
+    },
+    {
+      "parameters": {
+        "jsCode": "const current = $input.first().json;\nconst order = current.order;\n\nif (!Array.isArray(order.line_items) || !order.line_items.length) {\n  throw new Error('Order has no line items');\n}\n\nconst productsById = new Map();\n\nfor (const item of order.line_items) {\n  const wooCatalogId = String(item.variation_id || item.product_id);\n\n  productsById.set(wooCatalogId, {\n    wooCatalogId,\n    parentWooProductId: item.variation_id ? String(item.product_id) : null,\n    name: item.name,\n    sku: item.sku || '',\n    description: String(item.product_description ?? ''),\n    currentPrice: Number(item.price ?? item.total / (item.quantity || 1)),\n    currency: order.currency,\n  });\n}\n\nreturn [{\n  json: {\n    ...current,\n    order,\n    products: [...productsById.values()],\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        640,
+        0
+      ],
+      "id": "038fa5c6-dcec-440b-bb3b-ef85f028a354",
+      "name": "Prepare Products"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst rows = input.products.map(product => {\n  const price = Number(product.currentPrice);\n\n  if (!product.wooCatalogId || !Number.isFinite(price)) {\n    throw new Error('Product has an invalid ID or price');\n  }\n\n  return `{\n    wooCatalogId: ${JSON.stringify(product.wooCatalogId)}\n    parentWooProductId: ${JSON.stringify(product.parentWooProductId)}\n    name: ${JSON.stringify(product.name)}\n    sku: ${JSON.stringify(product.sku)}\n    description: ${JSON.stringify(product.description)}\n    currentPrice: ${price}\n  }`;\n}).join(',');\n\nconst query = `mutation {\n  createProducts(\n    data: [${rows}]\n    upsert: true\n  ) {\n    id\n    wooCatalogId\n    name\n    currentPrice\n  }\n}`;\n\nreturn [{ json: { ...input, query } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        0
+      ],
+      "id": "da550644-ce9f-4f0f-bbdb-9075db281a98",
+      "name": "Build Product Mutation"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://spines-woo-sync-twenty.duckdns.org/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1008,
+        0
+      ],
+      "id": "598de4b4-7ef8-483b-af42-53b0909e418f",
+      "name": "Upsert Products"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst products = response.data?.createProducts;\nconst wooOrder = $('Prepare Products').first().json.order;\nconst personId = $('Extract Person ID').first().json.personId;\n\nif (!products?.length || !personId) {\n  throw new Error('Missing Product or Person IDs');\n}\n\nconst total = Number(wooOrder.total);\nconst rawDate = wooOrder.date_completed_gmt;\n\nif (!Number.isFinite(total) || !rawDate) {\n  throw new Error('Order has an invalid total or completion date');\n}\n\nconst completedAt = new Date(\n  rawDate.endsWith('Z') ? rawDate : `${rawDate}Z`\n).toISOString();\n\nconst query = `mutation {\n  createOrders(\n    data: [{\n      wooOrderId: ${JSON.stringify(String(wooOrder.id))}\n      orderNumber: ${JSON.stringify(String(wooOrder.number))}\n      name: ${JSON.stringify(`Order ${wooOrder.number}`)}\n      total: ${total}\n      currencyCustom: ${JSON.stringify(wooOrder.currency)}\n      completedAt: ${JSON.stringify(completedAt)}\n      syncStatus: SYNCING\n      customer: {\n        connect: {\n          where: { id: ${JSON.stringify(personId)} }\n        }\n      }\n    }]\n    upsert: true\n  ) {\n    id\n    wooOrderId\n    syncStatus\n    customer {\n      id\n    }\n  }\n}`;\n\nreturn [{\n  json: {\n    wooOrder,\n    personId,\n    productIds: Object.fromEntries(\n      products.map(product => [\n        product.wooCatalogId,\n        product.id,\n      ])\n    ),\n    query,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1264,
+        128
+      ],
+      "id": "50fdbc5e-ac05-420d-a4ca-ef399d222b34",
+      "name": "Build Order Mutation"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://spines-woo-sync-twenty.duckdns.org/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1456,
+        128
+      ],
+      "id": "b838b0ff-08c6-4f7e-b2ce-b2065d42498b",
+      "name": "Upsert Order - Syncing"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst orderRecord = response.data?.createOrders?.[0];\nconst context = $('Build Order Mutation').first().json;\nconst { wooOrder, productIds } = context;\n\nif (!orderRecord?.id) {\n  throw new Error('Missing Twenty Order ID');\n}\n\nconst rows = wooOrder.line_items.map(item => {\n  const catalogId = String(item.variation_id || item.product_id);\n  const productId = productIds[catalogId];\n\n  if (!productId) {\n    throw new Error(`Missing Product ID for ${catalogId}`);\n  }\n\n  const metadata = item.meta_data ?? [];\n\n  const addOnLabels = new Set(\n    metadata\n      .filter(meta => meta.key === '_wapf_meta')\n      .flatMap(meta => Object.values(meta.value ?? {}))\n      .map(value => value?.label)\n      .filter(Boolean)\n  );\n\n  const visibleMetadata = metadata.filter(\n    meta => !String(meta.key).startsWith('_')\n  );\n\n  const format = meta => ({\n    name: meta.display_key ?? meta.key,\n    value: meta.display_value ?? meta.value,\n  });\n\n  const addOns = visibleMetadata\n    .filter(meta =>\n      addOnLabels.has(meta.key) ||\n      addOnLabels.has(meta.display_key)\n    )\n    .map(format);\n\n  const variations = item.variation_id\n    ? visibleMetadata\n        .filter(meta =>\n          !addOnLabels.has(meta.key) &&\n          !addOnLabels.has(meta.display_key)\n        )\n        .map(format)\n    : [];\n\n  return `{\n    name: ${JSON.stringify(`#${wooOrder.number} - ${item.name}`)}\n    wooLineItemKey: ${JSON.stringify(`${wooOrder.id}:${item.id}`)}\n    productNameSnapshot: ${JSON.stringify(item.name)}\n    skuSnapshot: ${JSON.stringify(item.sku || '')}\n    quantity: ${Number(item.quantity)}\n    unitPriceSnapshot: ${Number(item.price)}\n    lineTotal: ${Number(item.total)}\n    variationSnapshot: ${JSON.stringify(JSON.stringify(variations))}\n    addOnsSnapshot: ${JSON.stringify(JSON.stringify(addOns))}\n    order: {\n      connect: { where: { id: ${JSON.stringify(orderRecord.id)} } }\n    }\n    product: {\n      connect: { where: { id: ${JSON.stringify(productId)} } }\n    }\n  }`;\n}).join(',');\n\nconst query = `mutation {\n  createOrderItems(\n    data: [${rows}]\n    upsert: true\n  ) {\n    id\n    wooLineItemKey\n    order { id }\n    product { id }\n  }\n}`;\n\nreturn [{\n  json: {\n    ...context,\n    orderId: orderRecord.id,\n    query,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        128
+      ],
+      "id": "bbd6fb25-e248-4c65-a091-582d0b5c00a2",
+      "name": "Build Order Items Mutation"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://spines-woo-sync-twenty.duckdns.org/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1824,
+        128
+      ],
+      "id": "e2424acb-9a71-46bc-8c69-7dfda476723f",
+      "name": "Upsert Order Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst items = response.data?.createOrderItems;\nconst context = $('Build Order Items Mutation').first().json;\n\nif (!items?.length || !context.orderId) {\n  throw new Error('Missing Order or Order Item IDs');\n}\n\nconst query = `mutation {\n  updateOrder(\n    id: ${JSON.stringify(context.orderId)}\n    data: { syncStatus: COMPLETED }\n  ) {\n    id\n    wooOrderId\n    syncStatus\n  }\n}`;\n\nreturn [{\n  json: {\n    ...context,\n    orderItemIds: items.map(item => item.id),\n    query,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        128
+      ],
+      "id": "0a6f589f-a7af-4993-81e1-4fa8b8b73fdf",
+      "name": "Build Complete Order Mutation"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://spines-woo-sync-twenty.duckdns.org/graphql",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json.query }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2160,
+        128
+      ],
+      "id": "d8416324-8d14-4a2b-aa64-e898c07cd3ab",
+      "name": "Complete Order"
+    },
+    {
+      "parameters": {
+        "content": "**PERSON**",
+        "height": 240,
+        "width": 816,
+        "color": "#E5FFF5"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -304,
+        80
+      ],
+      "id": "9637e1f0-7700-450c-8f88-98a39310a128",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "**PRODUCT**",
+        "height": 240,
+        "width": 576,
+        "color": "#EBEDFF"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        592,
+        -64
+      ],
+      "id": "0c2aac43-dc2d-44a0-8e56-ff953d175957",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "**ORDER**",
+        "height": 240,
+        "width": 1136,
+        "color": "#DBF4FF"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1216,
+        64
+      ],
+      "id": "27e96b45-665e-43c5-9402-304ebce2ab6e",
+      "name": "Sticky Note2"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Signature": {
+      "main": [
+        [
+          {
+            "node": "If Signature valid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If Signature valid": {
+      "main": [
+        [
+          {
+            "node": "Order completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Invalid signature branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Order completed": {
+      "main": [
+        [
+          {
+            "node": "Prepare Person",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Not completed branch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Person": {
+      "main": [
+        [
+          {
+            "node": "Build Person Mutation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Person": {
+      "main": [
+        [
+          {
+            "node": "Extract Person ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Person Mutation": {
+      "main": [
+        [
+          {
+            "node": "Upsert Person",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Person ID": {
+      "main": [
+        [
+          {
+            "node": "Prepare Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Products": {
+      "main": [
+        [
+          {
+            "node": "Build Product Mutation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Product Mutation": {
+      "main": [
+        [
+          {
+            "node": "Upsert Products",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Products": {
+      "main": [
+        [
+          {
+            "node": "Build Order Mutation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Order Mutation": {
+      "main": [
+        [
+          {
+            "node": "Upsert Order - Syncing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Order - Syncing": {
+      "main": [
+        [
+          {
+            "node": "Build Order Items Mutation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Order Items Mutation": {
+      "main": [
+        [
+          {
+            "node": "Upsert Order Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Order Items": {
+      "main": [
+        [
+          {
+            "node": "Build Complete Order Mutation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Complete Order Mutation": {
+      "main": [
+        [
+          {
+            "node": "Complete Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "nodeGroups": [],
+  "tags": []
+}
